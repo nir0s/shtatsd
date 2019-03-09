@@ -51,13 +51,7 @@ function statsd.increment() {
   local -r value="${2:-1}"
   local -r sample="$3"
 
-  local real_metric="${metric}:${value}|${type}"
-
-  if [ ! -z $sample ]; then
-    real_metric="${real_metric}|@${sample}"
-  fi
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
 ######
@@ -85,13 +79,7 @@ function statsd.decrement() {
   local -r value="${2:--1}"
   local -r sample="$3"
 
-  local real_metric="${metric}:${value}|${type}"
-
-  if [ ! -z $sample ]; then
-    real_metric="${real_metric}|@${sample}"
-  fi
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
 ######
@@ -118,15 +106,10 @@ function statsd.gauge() {
 
   if [ -z $value ]; then
     echo "WARNING: Gauge must be provided with a value"
+    exit 1
   fi
 
-  local real_metric="${metric}:${value}|${type}"
-
-  if [ ! -z $sample ]; then
-    real_metric="${real_metric}|@${sample}"
-  fi
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
 ######
@@ -155,13 +138,7 @@ function statsd.timing() {
     echo "WARNING: Timer must be provided with a value"
   fi
 
-  local real_metric="${metric}:${value}|${type}"
-
-  if [ ! -z $sample ]; then
-    real_metric="${real_metric}|@${sample}"
-  fi
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
 ######
@@ -185,9 +162,7 @@ function statsd.histogram() {
     echo "WARNING: Histogram must be provided with a value"
   fi
 
-  local real_metric="${metric}:${value}|${type}"
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
 ######
@@ -211,19 +186,42 @@ function statsd.set() {
     echo "WARNING: Set must be provided with a value"
   fi
 
-  local real_metric="${metric}:${value}|${type}"
-
-  _statsd.emit "$real_metric"
+  _statsd.emit "$type" "$metric" "$value" "$sample"
 }
 
+######
+# Private: Emit a metric
+#
+# $1 (type) The type of the metric (c|g|ms|h|s).
+# $2 (metric) The metric and kv pairs string.
+# $3 (value) The value of the metric.
+# $4 (sample) The sampling rate, if any.
+#
+# Examples:
+#
+#   _statsd.emit "c" "my_metric,k=v" 2 0.1
+#   # => 'my_metric,k=v:2|c|@0.1'
+#
+#   _statsd.emit "ms" "my_timer" 319
+#   # => 'my_timer:319|ms'
+######
 function _statsd.emit() {
-  local -r metric="$1"
+  local -r type="$1"
+  local -r metric="$2"
+  local -r value="$3"
+  local -r sample="$4"
+
+  local real_metric="${metric}:${value}|${type}"
+
+  if [ ! -z $sample ]; then
+    real_metric="${real_metric}|@${sample}"
+  fi
 
   # Setup UDP socket with statsd server
   exec 3<> /dev/udp/$SHTATSD_HOST/$SHTATSD_PORT
 
   # Send data
-  printf "$metric" >&3
+  printf "$real_metric" >&3
 
   # Close UDP socket
   exec 3<&-

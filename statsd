@@ -1,0 +1,231 @@
+######
+# shtatsd is a statsd client for bash.
+#
+# Usage:
+#   statsd.increment "method_run_count,key1=value1,key2=value2" 10
+#   statsd.timing "method_run_duration_ms,..." $(($end_time-$start_time))
+#   statsd.gauge "running_processes,..." "$(ps aux --no-heading | wc -l)"
+######
+
+declare -r SHTATSD_VERSION="0.1.0"
+
+declare -r SHTATSD_HOST="${STATSD_HOST:-127.0.0.1}"
+declare -r SHTATSD_PORT="${STATSD_PORT:-8125}"
+
+######
+# Public: Return the milliseconds since Unix epoch
+#
+# Examples:
+#
+#   statsd.helper.now
+#   # => '1552138908988'
+#
+# Returns (echos) the time string.
+######
+function statsd.helper.now() {
+  echo $(($(date +'%s * 1000 + %-N / 1000000')))
+}
+
+######
+# Public: Increment a counter metric
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The amount to increment by.
+# $3 (sample) The sampling rate.
+#
+# Examples:
+#
+#   statsd.increment "my_counter"
+#   # => 'my_counter:1|c'
+#
+#   statsd.increment "my_counter" 5
+#   # => 'my_counter:5|c'
+#
+#   statsd.increment "my_counter" 5 0.1
+#   # => 'my_counter:5|c|@0.1'
+######
+function statsd.increment() {
+  local -r type="c"
+
+  local -r metric="$1"
+  local -r value="${2:-1}"
+  local -r sample="$3"
+
+  local real_metric="${metric}:${value}|${type}"
+
+  if [ ! -z $sample ]; then
+    real_metric="${real_metric}|@${sample}"
+  fi
+
+  _statsd.emit "$real_metric"
+}
+
+######
+# Public: Decrement a counter metric
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The amount to decrement by.
+# $3 (sample) The sampling rate.
+#
+# Examples:
+#
+#   statsd.decrement "my_counter"
+#   # => 'my_counter:-1|c'
+#
+#   statsd.decrement "my_counter" 5
+#   # => 'my_counter:-5|c'
+#
+#   statsd.decrement "my_counter" 5 0.1
+#   # => 'my_counter:-5|c|@0.1'
+######
+function statsd.decrement() {
+  local -r type="c"
+
+  local -r metric="$1"
+  local -r value="${2:--1}"
+  local -r sample="$3"
+
+  local real_metric="${metric}:${value}|${type}"
+
+  if [ ! -z $sample ]; then
+    real_metric="${real_metric}|@${sample}"
+  fi
+
+  _statsd.emit "$real_metric"
+}
+
+######
+# Public: Emit a gauge metric
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The value of the gauge.
+# $3 (sample) The sampling rate.
+#
+# Examples:
+#
+#   statsd.increment "my_gauge" 913
+#   # => 'my_gauge:913|g'
+#
+#   statsd.increment "my_gauge" 913 0.1
+#   # => 'my_gauge:913|g|@0.1'
+######
+function statsd.gauge() {
+  local -r type="g"
+
+  local -r metric="$1"
+  local -r value="$2"
+  local -r sample="$3"
+
+  if [ -z $value ]; then
+    echo "WARNING: Gauge must be provided with a value"
+  fi
+
+  local real_metric="${metric}:${value}|${type}"
+
+  if [ ! -z $sample ]; then
+    real_metric="${real_metric}|@${sample}"
+  fi
+
+  _statsd.emit "$real_metric"
+}
+
+######
+# Public: Emit a timer
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The time in milliseconds.
+# $3 (sample) The sampling rate.
+#
+# Examples:
+#
+#   statsd.increment "my_timer" 31
+#   # => 'my_timer:5|ms'
+#
+#   statsd.increment "my_timer" 31 0.1
+#   # => 'my_timer:5|ms|@0.1'
+######
+function statsd.timing() {
+  local -r type="ms"
+
+  local -r metric="$1"
+  local -r value="$2"
+  local -r sample="$3"
+
+  if [ -z $value ]; then
+    echo "WARNING: Timer must be provided with a value"
+  fi
+
+  local real_metric="${metric}:${value}|${type}"
+
+  if [ ! -z $sample ]; then
+    real_metric="${real_metric}|@${sample}"
+  fi
+
+  _statsd.emit "$real_metric"
+}
+
+######
+# Public: Emit a histogram metric
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The value of the histogram.
+#
+# Examples:
+#
+#   statsd.increment "my_histogram" 5
+#   # => 'my_histogram:5|h'
+######
+function statsd.histogram() {
+  local -r type="h"
+
+  local -r metric="$1"
+  local -r value="$2"
+
+  if [ -z $value ]; then
+    echo "WARNING: Histogram must be provided with a value"
+  fi
+
+  local real_metric="${metric}:${value}|${type}"
+
+  _statsd.emit "$real_metric"
+}
+
+######
+# Public: Emit a set metric
+#
+# $1 (metric) The metric to emit.
+# $2 (value) The value of the set.
+#
+# Examples:
+#
+#   statsd.increment "my_set" 5
+#   # => 'my_set:5|s'
+######
+function statsd.set() {
+  local -r type="s"
+
+  local -r metric="$1"
+  local -r value="$2"
+
+  if [ -z $value ]; then
+    echo "WARNING: Set must be provided with a value"
+  fi
+
+  local real_metric="${metric}:${value}|${type}"
+
+  _statsd.emit "$real_metric"
+}
+
+function _statsd.emit() {
+  local -r metric="$1"
+
+  # Setup UDP socket with statsd server
+  exec 3<> /dev/udp/$SHTATSD_HOST/$SHTATSD_PORT
+
+  # Send data
+  printf "$metric" >&3
+
+  # Close UDP socket
+  exec 3<&-
+  exec 3>&-
+}
